@@ -150,10 +150,12 @@ select.pick,input.text{
 .toast{
   position:fixed;left:12px;right:12px;bottom:calc(76px + env(safe-area-inset-bottom));z-index:70;
   background:var(--surface-2);border:1px solid var(--line);border-radius:var(--r);
-  padding:12px 14px;font-size:14px;line-height:1.4;transform:translateY(140%);
-  transition:transform .28s cubic-bezier(.2,.8,.3,1);max-width:616px;margin:0 auto;
+  padding:12px 14px;font-size:14px;line-height:1.4;
+  transform:translateY(24px);opacity:0;visibility:hidden;pointer-events:none;
+  transition:transform .28s cubic-bezier(.2,.8,.3,1),opacity .22s,visibility .22s;
+  max-width:616px;margin:0 auto;
 }
-.toast.show{transform:translateY(0)}
+.toast.show{transform:translateY(0);opacity:1;visibility:visible}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 </head>
@@ -173,7 +175,6 @@ select.pick,input.text{
   <button data-v="plan"><span class="ico">⚙</span>Plan</button>
 </nav>
 
-<div class="toast" id="toast"></div>
 
 <script>
 "use strict";
@@ -307,8 +308,19 @@ const fmtDate = iso => { const p = iso.split("-"); return `${p[2]}.${p[1]}.${p[0
 const num = v => parseFloat(String(v).replace(",", ".")) || 0;
 
 function toast(msg, ms){
-  const t = $("#toast"); t.innerHTML = msg; t.classList.add("show");
-  clearTimeout(toast._t); toast._t = setTimeout(()=>t.classList.remove("show"), ms || 3200);
+  let t = document.getElementById("toast");
+  if(!t){
+    t = document.createElement("div");
+    t.id = "toast"; t.className = "toast";
+    document.body.appendChild(t);
+  }
+  t.innerHTML = msg;
+  requestAnimationFrame(()=>t.classList.add("show"));
+  clearTimeout(toast._t);
+  toast._t = setTimeout(()=>{
+    t.classList.remove("show");
+    setTimeout(()=>{ if(t.parentNode) t.remove(); }, 400);
+  }, ms || 3200);
 }
 function newId(name){
   const base = name.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/(^-|-$)/g,"").slice(0,24) || "ex";
@@ -713,6 +725,7 @@ function renderPlan(){
     location.reload();
   }, true);
   m.appendChild(box);
+  m.appendChild(el(`<div class="section-title" style="text-align:center;margin-top:14px">Gymhero · Version 3</div>`));
 }
 
 function newExercise(){
