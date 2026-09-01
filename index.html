@@ -21,7 +21,7 @@ html,body{margin:0;padding:0;background:var(--bg);color:var(--text)}
 body{
   font:16px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
   font-variant-numeric:tabular-nums;
-  padding-bottom:calc(64px + env(safe-area-inset-bottom));
+  padding-bottom:calc(96px + env(safe-area-inset-bottom));
   overscroll-behavior-y:none;
 }
 input,button,select{font:inherit;font-variant-numeric:tabular-nums;color:inherit}
@@ -46,7 +46,7 @@ header{
 .day.on{background:var(--surface-2);color:var(--text);border-color:var(--red)}
 .day.rest{opacity:.45}
 
-main{padding:14px 12px 24px;max-width:640px;margin:0 auto}
+main{padding:14px 12px 28px;max-width:640px;margin:0 auto}
 .card{background:var(--surface);border-radius:var(--r);margin-bottom:10px;overflow:hidden}
 .exhead{display:flex;align-items:center;gap:10px;padding:12px}
 .exhead .nm{flex:1;min-width:0}
@@ -83,7 +83,7 @@ main{padding:14px 12px 24px;max-width:640px;margin:0 auto}
 
 nav{
   position:fixed;left:0;right:0;bottom:0;z-index:30;display:grid;grid-template-columns:repeat(4,1fr);
-  background:rgba(23,24,27,.96);backdrop-filter:blur(12px);border-top:1px solid var(--line);
+  background:var(--bg);border-top:1px solid var(--line);
   padding-bottom:env(safe-area-inset-bottom);
 }
 nav button{height:60px;color:var(--muted);font-size:11.5px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px}
