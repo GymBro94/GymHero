@@ -261,7 +261,7 @@ function emptyDB(){
 }
 function freshDB(mode){
   const base = mode === "template" ? templateDB() : emptyDB();
-  return {v:2, ex:base.ex, plan:base.plan, sessions:[], draft:{}};
+  return {v:2, ex:base.ex, plan:base.plan, sessions:[], draft:{}, settings:{anchor:"smart", v:2}};
 }
 
 /* ---------- Zustand ---------- */
@@ -272,6 +272,11 @@ function migrate(db){
   db.ex = db.ex || {};
   db.sessions = db.sessions || [];
   db.draft = db.draft || {};
+  if(!db.settings) db.settings = {anchor:"smart", v:2};
+  else if(db.settings.v !== 2){                       // alte Regel auf die neue heben
+    if(db.settings.anchor === "top" || !db.settings.anchor) db.settings.anchor = "smart";
+    db.settings.v = 2;
+  }
   if(!db.plan){                       // v1: Plan steckte noch im Code
     const t = templateDB();
     db.plan = t.plan;
@@ -341,23 +346,77 @@ function getDraft(){
   const d = DB.draft[k];
   DB.plan[day].items.forEach(it=>{
     const e = DB.ex[it.id];
+    const cardio = e.typ === "cardio";
+    // Typ gewechselt? Dann den Eintrag neu aufbauen.
+    if(d[it.id] && cardio !== !!d[it.id].cardio) delete d[it.id];
     if(!d[it.id]){
-      d[it.id] = e.typ === "cardio"
+      d[it.id] = cardio
         ? {cardio:{min:"", inc:"", kmh:""}}
         : {sets: Array.from({length:rowCount(it)}, ()=>({reps:"", kg:e.weight, done:false}))};
+      return;
     }
+    if(cardio) return;
+    // Satzzahl im Plan geändert: Zeilen ergänzen, leere überzählige entfernen.
+    const cur = d[it.id].sets, want = rowCount(it);
+    while(cur.length < want){
+      cur.push({reps:"", kg: cur.length ? cur[cur.length-1].kg : e.weight, done:false});
+    }
+    while(cur.length > want && !Number(cur[cur.length-1].reps)) cur.pop();
   });
   return d;
 }
-function willProgress(id, entry){
+const ANCHORS = {
+  smart:"Startgewicht ergibt sich aus dem Training",
+  first:"Erster Satz erreicht den Trigger",
+  top:"Schwerster Satz erreicht den Trigger",
+  last:"Letzter Satz erreicht den Trigger"
+};
+function ruleText(e){
+  if(e.typ === "cbum") return `Steigerung ab ${e.trigger} Wdh. im 1. Durchgang (+${fmtKg(e.inc)} kg)`;
+  const m = DB.settings.anchor;
+  if(m === "first") return `Steigerung ab ${e.trigger} Wdh. im 1. Satz (+${fmtKg(e.inc)} kg)`;
+  if(m === "last")  return `Steigerung ab ${e.trigger} Wdh. im letzten Satz (+${fmtKg(e.inc)} kg)`;
+  return `Steigerung ab ${e.trigger} Wdh. im schwersten Satz (+${fmtKg(e.inc)} kg)`;
+}
+const heaviest = list => list.reduce((a,x) => num(x.kg) > num(a.kg) ? x : a, list[0]);
+
+// Ergibt {next, up} — das Startgewicht fürs nächste Mal und ob es eine Steigerung ist.
+function progression(id, entry){
   const e = DB.ex[id];
-  if(!e || e.typ === "cardio" || !entry || !entry.sets) return false;
+  if(!e || e.typ === "cardio" || !entry || !entry.sets) return null;
+  const done = entry.sets.filter(s => Number(s.reps) > 0);
+  if(!done.length) return null;
+  const inc = num(e.inc), trig = e.trigger;
+
   if(e.typ === "cbum"){
     const r = entry.sets.slice(0,3);
-    return r.length === 3 && r.every(s => Number(s.reps) >= e.trigger);
+    const ok = r.length === 3 && r.every(s => Number(s.reps) >= trig);
+    return {next: Math.round((num(done[0].kg) + (ok ? inc : 0))*100)/100, up: ok};
   }
-  const s = entry.sets[0];
-  return !!s && Number(s.reps) >= e.trigger;
+
+  const m = DB.settings.anchor;
+  if(m === "first" || m === "last" || m === "top"){
+    const a = m === "first" ? done[0] : m === "last" ? done[done.length-1] : heaviest(done);
+    const ok = Number(a.reps) >= trig;
+    return {next: Math.round((num(a.kg) + (ok ? inc : 0))*100)/100, up: ok};
+  }
+
+  // Standard: schwerster Satz schafft den Trigger → hoch.
+  // Sonst das Gewicht übernehmen, das am dichtesten unter dem Trigger lag.
+  const top = heaviest(done);
+  if(Number(top.reps) >= trig) return {next: Math.round((num(top.kg) + inc)*100)/100, up:true};
+  const below = done.filter(s => Number(s.reps) < trig);
+  const pick = (below.length ? below : done).reduce((a,x)=>{
+    const da = trig - Number(a.reps), dx = trig - Number(x.reps);
+    if(dx < da) return x;
+    if(dx === da && num(x.kg) > num(a.kg)) return x;
+    return a;
+  });
+  return {next: num(pick.kg), up:false};
+}
+function willProgress(id, entry){
+  const p = progression(id, entry);
+  return !!p && p.up;
 }
 function lastSession(id){
   for(let i = DB.sessions.length-1; i >= 0; i--) if(DB.sessions[i].entries[id]) return DB.sessions[i];
@@ -423,13 +482,15 @@ function renderTrain(){
       body.appendChild(el(`<div class="colhead"><div></div><div>Gewicht (kg)</div><div>Wdh.</div><div></div></div>`));
       const hint = el(`<div class="hint"></div>`);
       const refresh = ()=>{
-        const u = willProgress(it.id, entry), p = card.querySelector(".wpill");
-        p.classList.toggle("up", u);
-        p.textContent = fmtKg(e.weight) + " kg" + (u ? " ↑" : "");
-        hint.className = "hint" + (u ? " up" : "");
-        hint.textContent = u
-          ? `Ziel erreicht → nächstes Mal ${fmtKg(e.weight + e.inc)} kg`
-          : `Steigerung ab ${e.trigger} Wdh. im ${e.typ==="cbum"?"1. Durchgang":"1. Satz"} (+${fmtKg(e.inc)} kg)`;
+        const pr = progression(it.id, entry);
+        const p = card.querySelector(".wpill");
+        const up = !!pr && pr.up;
+        p.classList.toggle("up", up);
+        p.textContent = fmtKg(pr ? pr.next : e.weight) + " kg" + (up ? " ↑" : "");
+        hint.className = "hint" + (up ? " up" : "");
+        hint.textContent = !pr ? ruleText(e)
+          : up ? `Ziel erreicht → nächstes Mal ${fmtKg(pr.next)} kg`
+               : `Nächstes Mal Startgewicht ${fmtKg(pr.next)} kg`;
       };
 
       entry.sets.forEach((s,i)=>{
@@ -489,10 +550,11 @@ function finishWorkout(){
     const sets = entry.sets.filter(s => Number(s.reps) > 0).map(s=>({reps:+s.reps, kg:+s.kg}));
     if(!sets.length) return;
     entries[it.id] = {sets};
-    if(willProgress(it.id, entry)){
-      e.weight = Math.round((sets[0].kg + e.inc)*100)/100;
-      ups.push(e.name + " → " + fmtKg(e.weight) + " kg");
-    } else e.weight = sets[0].kg;
+    const pr = progression(it.id, entry);
+    if(pr){
+      e.weight = pr.next;
+      if(pr.up) ups.push(e.name + " → " + fmtKg(e.weight) + " kg");
+    }
   });
   if(!Object.keys(entries).length){ toast("Nichts eingetragen — trag mindestens einen Satz ein."); return; }
   DB.sessions.push({date:todayISO(), day, name:DB.plan[day].name, entries});
@@ -661,6 +723,16 @@ function renderPlan(){
     m.appendChild(box);
   }
 
+  m.appendChild(el(`<div class="section-title">Woran das Gewicht fürs nächste Training hängt. Der Standard nimmt an: schafft der schwerste Satz den Trigger, geht es hoch — sonst wird das Gewicht übernommen, bei dem du am dichtesten unter dem Trigger lagst. Aufwärmsätze fallen dabei von selbst raus.</div>`));
+  const anc = el(`<select class="pick">
+    <option value="smart">Startgewicht ergibt sich aus dem Training</option>
+    <option value="top">Schwerster Satz erreicht den Trigger</option>
+    <option value="first">Erster Satz erreicht den Trigger</option>
+    <option value="last">Letzter Satz erreicht den Trigger</option></select>`);
+  anc.value = DB.settings.anchor;
+  anc.onchange = ()=>{ DB.settings.anchor = anc.value; save(); };
+  m.appendChild(anc);
+
   m.appendChild(el(`<div class="section-title">Alle Übungen. Der Trigger ist die Wiederholungszahl, ab der beim nächsten Training automatisch erhöht wird, der Schritt sagt um wie viel.</div>`));
   const ids = activeIds();
   const stamm = el(`<div class="card"></div>`);
@@ -725,7 +797,7 @@ function renderPlan(){
     location.reload();
   }, true);
   m.appendChild(box);
-  m.appendChild(el(`<div class="section-title" style="text-align:center;margin-top:14px">Gymhero · Version 3</div>`));
+  m.appendChild(el(`<div class="section-title" style="text-align:center;margin-top:14px">Gymhero · Version 6</div>`));
 }
 
 function newExercise(){
